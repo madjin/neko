@@ -38,6 +38,15 @@ bin
 # Code Editors
 .idea
 
+# Claude Code task documentation (may contain secrets)
+.claude/
+
+# GitHub issues (local drafts)
+.github/issues/
+
+# Public static files (project-specific content)
+public/
+
 runtime/fonts/*
 !runtime/fonts/.gitkeep
 
