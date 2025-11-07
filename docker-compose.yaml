@@ -1,14 +1,68 @@
 services:
   neko:
-    image: "ghcr.io/m1k1o/neko/firefox:latest"
+    image: "ghcr.io/m1k1o/neko/nvidia-google-chrome:latest"
+    runtime: nvidia
     restart: "unless-stopped"
     shm_size: "2gb"
+    cap_add:
+      - SYS_ADMIN
     ports:
       - "8080:8080"
       - "52000-52100:52000-52100/udp"
+    volumes:
+      - "./public:/home/neko/public:ro"
+      - "./custom-policies.json:/etc/opt/chrome/policies/managed/policies.json:ro"
+      - "./apps/google-chrome/supervisord.nvidia.conf:/etc/neko/supervisord/google-chrome.conf:ro"
+    entrypoint: >
+      /bin/sh -c "python3 -m http.server 3000 --directory /home/neko/public > /var/log/http-server.log 2>&1 &
+      exec /usr/bin/supervisord -c /etc/neko/supervisord.conf"
     environment:
-      NEKO_DESKTOP_SCREEN: 1920x1080@30
+      NEKO_CAPTURE_VIDEO_PIPELINE: |
+        ximagesrc display-name={display} show-pointer=true use-damage=false
+          ! video/x-raw,framerate=25/1
+          ! cudaupload ! cudaconvert ! queue
+          ! video/x-raw(memory:CUDAMemory),format=NV12
+          ! nvh264enc
+            name=encoder
+            preset=2
+            gop-size=25
+            spatial-aq=true
+            temporal-aq=true
+            bitrate=4096
+            vbv-buffer-size=4096
+            rc-mode=6
+          ! h264parse config-interval=-1
+          ! video/x-h264,stream-format=byte-stream
+          ! appsink name=appsink
+      NEKO_CAPTURE_VIDEO_CODEC: "h264"
+      NEKO_DESKTOP_SCREEN: 1280x720@30
+
+      # Broadcast pipeline for RTMPS streaming
+      NEKO_CAPTURE_BROADCAST_URL: "${RTMP_SERVER}:443/x/${STREAM_KEY}"
+      NEKO_CAPTURE_BROADCAST_AUTOSTART: "true"
+      NEKO_CAPTURE_BROADCAST_PIPELINE: |
+        flvmux name=mux
+          ! rtmp2sink location={url}
+        pulsesrc device={device}
+          ! audio/x-raw,channels=2
+          ! audioconvert
+          ! voaacenc
+          ! mux.
+        ximagesrc display-name={display} show-pointer=false use-damage=false
+          ! video/x-raw,framerate=28/1
+          ! videoconvert
+          ! queue
+          ! x264enc bframes=0 key-int-max=0 byte-stream=true tune=zerolatency speed-preset=veryfast
+          ! mux.
+
       NEKO_MEMBER_MULTIUSER_USER_PASSWORD: neko
       NEKO_MEMBER_MULTIUSER_ADMIN_PASSWORD: admin
       NEKO_WEBRTC_EPR: 52000-52100
       NEKO_WEBRTC_ICELITE: 1
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
